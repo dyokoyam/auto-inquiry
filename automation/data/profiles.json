@@ -1,0 +1,15 @@
+[
+  {
+    "name": "田中太郎",
+    "company": "サンプル株式会社",
+    "email": "tanaka@example.com",
+    "phone": "03-1234-5678",
+    "message": "お問い合わせ内容です。",
+    "address": {
+      "zip": "100-0001",
+      "prefecture": "東京都",
+      "city": "千代田区"
+    }
+  }
+]
+
