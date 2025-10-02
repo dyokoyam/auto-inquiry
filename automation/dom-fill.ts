@@ -122,7 +122,17 @@ function getProfileValue(profile: Profile, fieldType: string): string {
     case 'position': return profile.position || '';
     case 'email': return profile.email || '';
     case 'tel': return profile.tel || '';
+    case 'fax': return (profile as any).fax || '';
+    case 'zip': return (profile as any).zip || '';
+    case 'pref': return (profile as any).pref || '';
+    case 'city': return (profile as any).city || '';
+    case 'address': return (profile as any).address || '';
+    case 'building': return (profile as any).building || '';
     case 'fullAddress': return profile.fullAddress || '';
+    case 'url': return (profile as any).url || '';
+    case 'subject': return (profile as any).subject || '';
+    case 'industry': return (profile as any).industry || '';
+    case 'member': return (profile as any).member || '';
     default: return '';
   }
 }
@@ -200,7 +210,111 @@ export async function fillForm(page: any, profile: Profile) {
     }
   }
 
+  // セレクトボックスの処理（profile.prefに一致するもの、なければ最後のオプション）
+  const selects = formDocument.locator('select');
+  const selectCount = await selects.count();
+  for (let i = 0; i < selectCount; i++) {
+    const select = selects.nth(i);
+    if (await select.isVisible()) {
+      try {
+        const options = select.locator('option');
+        const optionCount = await options.count();
+        let selected = false;
+        const pref = (profile as any).pref;
+        if (pref) {
+          for (let j = 0; j < optionCount; j++) {
+            const text = (await options.nth(j).textContent()) || '';
+            if (text.trim() === pref) {
+              await select.selectOption({ index: j });
+              selected = true;
+              break;
+            }
+          }
+        }
+        if (!selected && optionCount > 0) {
+          await select.selectOption({ index: optionCount - 1 });
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ラジオボタンの処理（各nameグループで最初の有効な項目を選択）
+  const radios = formDocument.locator('input[type="radio"]');
+  const radioCount = await radios.count();
+  const pickedRadioNames = new Set<string>();
+  for (let i = 0; i < radioCount; i++) {
+    const radio = radios.nth(i);
+    if (await radio.isVisible()) {
+      const name = (await radio.getAttribute('name')) || '';
+      if (!pickedRadioNames.has(name)) {
+        try { await radio.check({ timeout: 1000 }); } catch (_) {}
+        pickedRadioNames.add(name);
+      }
+    }
+  }
+
+  // 同意系チェックボックスの処理（プライバシー、同意、利用規約など）
+  const agreeKeywords = ['同意', '承諾', '利用規約', 'プライバシー', '個人情報'];
+  const checkboxes = formDocument.locator('input[type="checkbox"]');
+  const checkboxCount = await checkboxes.count();
+  for (let i = 0; i < checkboxCount; i++) {
+    const checkbox = checkboxes.nth(i);
+    if (await checkbox.isVisible()) {
+      try {
+        const id = await checkbox.getAttribute('id');
+        let labelText = '';
+        if (id) {
+          const label = formDocument.locator(`label[for="${id}"]`).first();
+          if (await label.isVisible()) {
+            labelText = (await label.textContent()) || '';
+          }
+        }
+        if (!labelText) {
+          const parentLabel = checkbox.locator('xpath=ancestor::label[1]').first();
+          if (await parentLabel.isVisible()) {
+            labelText = (await parentLabel.textContent()) || '';
+          }
+        }
+        if (agreeKeywords.some(k => labelText.includes(k))) {
+          try { await checkbox.check({ timeout: 1000 }); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  }
+
+  // 空の必須フィールドをダッシュで埋める（salesbotのフォールバック挙動）
+  const textInputs = formDocument.locator('input[type="text"], input:not([type]), textarea');
+  const textCount = await textInputs.count();
+  for (let i = 0; i < textCount; i++) {
+    const input = textInputs.nth(i);
+    if (await input.isVisible()) {
+      const current = await input.inputValue();
+      if (current.trim() === '') {
+        try { await input.fill('—'); } catch (_) {}
+      }
+    }
+  }
+
   console.log('フォーム入力完了');
+
+  // フォーム入力後の検証（デバッグ用）
+  console.log('フォーム入力結果を検証中...');
+  const inputElements = formDocument.locator('input, textarea');
+  const inputCount = await inputElements.count();
+
+  for (let i = 0; i < Math.min(inputCount, 10); i++) { // 最初の10要素のみチェック
+    const element = inputElements.nth(i);
+    if (await element.isVisible()) {
+      const tagName = await element.evaluate((el: Element) => el.tagName);
+      const type = await element.getAttribute('type') || 'text';
+      const name = await element.getAttribute('name') || '';
+      const value = await element.inputValue();
+
+      if (value.trim() !== '') {
+        console.log(`入力確認: ${tagName}[${type}] ${name} = "${value.substring(0, 50)}${value.length > 50 ? '...' : ''}"`);
+      }
+    }
+  }
 }
 
 // ====================================
@@ -222,27 +336,76 @@ export async function clickSubmitButton(page: any): Promise<void> {
     ...SUBMIT_KEYWORDS.alt.map(alt => `input[alt*="${alt}"]`)
   ];
 
-  // まず標準的なセレクタで検索
+  // まず標準的なセレクタで検索（より積極的に検索）
   for (const selector of submitSelectors) {
-    const element = formDocument.locator(selector).first();
-    if (await element.isVisible()) {
-      await element.click();
-      console.log(`送信ボタンクリック: ${selector}`);
-      return;
+    const elements = formDocument.locator(selector);
+    const count = await elements.count();
+
+    for (let i = 0; i < count; i++) {
+      const element = elements.nth(i);
+      if (await element.isVisible()) {
+        try {
+          // ボタンが有効かチェック
+          const isDisabled = await element.getAttribute('disabled');
+          if (isDisabled === null) {
+            try { await element.scrollIntoViewIfNeeded(); } catch (_) {}
+            await element.click({ timeout: 10000 }).catch(async () => {
+              await element.click({ timeout: 10000, force: true });
+            });
+            console.log(`送信ボタンクリック成功: ${selector} (要素番号: ${i})`);
+            return;
+          }
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.log(`送信ボタンクリック失敗: ${selector} (要素番号: ${i}) - ${errorMessage}`);
+        }
+      }
     }
   }
 
-  // 次にテキストベースのボタンを検索（Playwright対応）
+  // 次にテキストベースのボタンを検索（より広範に検索）
   for (const text of SUBMIT_KEYWORDS.text) {
-    const element = formDocument.locator(`button`).filter({ hasText: text }).first();
-    if (await element.isVisible()) {
-      await element.click();
-      console.log(`送信ボタンクリック: button with text "${text}"`);
-      return;
+    const elements = formDocument.locator(`button, input[type="button"], span`).filter({ hasText: text });
+    const count = await elements.count();
+
+    for (let i = 0; i < count; i++) {
+      const element = elements.nth(i);
+      if (await element.isVisible()) {
+        try {
+          const isDisabled = await element.getAttribute('disabled');
+          if (isDisabled === null) {
+            try { await element.scrollIntoViewIfNeeded(); } catch (_) {}
+            await element.click({ timeout: 10000 }).catch(async () => {
+              await element.click({ timeout: 10000, force: true });
+            });
+            console.log(`送信ボタンクリック成功: button with text "${text}" (要素番号: ${i})`);
+            return;
+          }
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.log(`送信ボタンクリック失敗: button with text "${text}" (要素番号: ${i}) - ${errorMessage}`);
+        }
+      }
     }
   }
 
-  console.log('送信ボタンが見つかりませんでした');
+  // フォームタグのsubmit()を直接実行するフォールバック
+  try {
+    const submitted = await formDocument.evaluate(() => {
+      const forms = Array.from(document.getElementsByTagName('form')) as HTMLFormElement[];
+      if (forms.length > 0) {
+        forms[forms.length - 1].submit();
+        return true;
+      }
+      return false;
+    });
+    if (submitted) {
+      console.log('送信ボタンが見つからないため、form.submit() を実行しました');
+      return;
+    }
+  } catch (_) {}
+
+  console.log('有効な送信ボタンが見つかりませんでした');
 }
 
 // ====================================
@@ -261,22 +424,26 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     }
 
     // ====================================
-    // textareaの確認処理（@salesbot/ のロジックから移植）
+    // textareaの確認処理（送信後の状態チェック）
     // ====================================
 
-    const textareas = formDocument.locator('textarea');
-    const textareaCount = await textareas.count();
+    // まず、現在のページが確認画面かどうかをチェック
+    // 確認画面の特徴的な要素（確認、送信完了などのキーワード）を探す
+    const currentPageContent = await page.content();
+    const isConfirmationPage = /確認|完了|ありがとう|送信しました|success|complete|thank/i.test(currentPageContent);
 
-    if (textareaCount > 0) {
-      // 最後のtextareaを取得して値チェック
-      const lastTextarea = textareas.nth(textareaCount - 1);
-      const textareaValue = await lastTextarea.inputValue();
+    if (isConfirmationPage) {
+      // 確認画面の場合、textareaの値チェックは行わない（確認画面で内容表示される場合がある）
+      console.log('確認画面を検知しました。textareaチェックをスキップします。');
+    } else {
+      // 確認画面ではない場合（元のフォーム画面の場合）はエラー
+      const textareas = formDocument.locator('textarea');
+      const textareaCount = await textareas.count();
 
-      // 最後のtextareaに値が入っている場合はエラー（フォームがまだ表示されている状態）
-      if (textareaValue !== '') {
+      if (textareaCount > 0) {
         return {
           success: false,
-          message: '対応できない問い合わせフォームです（textareaに値が残っています）'
+          message: '送信後にフォーム画面が表示されたままです（送信が失敗した可能性）'
         };
       }
     }
@@ -365,8 +532,13 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     }
 
     // 最後のボタンをクリック（@salesbot/ のロジック）
-    const targetButton = allSubmitButtons[allSubmitButtons.length - 1];
-    await targetButton.click();
+  const targetButton = allSubmitButtons[allSubmitButtons.length - 1];
+  try { await (targetButton as any).scrollIntoViewIfNeeded?.(); } catch (_) {}
+  try {
+    await (targetButton as any).click({ timeout: 10000 });
+  } catch {
+    await (targetButton as any).click({ timeout: 10000, force: true });
+  }
 
     // 5秒待機（送信処理完了を待つ）
     await page.waitForTimeout(5000);
@@ -382,9 +554,9 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     console.log(`最終ページ確認: ${finalUrl}`);
 
     // ページコンテンツから成功/失敗の兆候をチェック
-    const pageContent = await page.content();
-    const hasSuccessKeywords = /ありがとう|送信完了|送信しました|success|complete|thank/i.test(pageContent);
-    const hasErrorKeywords = /エラー|失敗|error|failed|invalid/i.test(pageContent);
+    const finalPageContent = await page.content();
+    const hasSuccessKeywords = /ありがとう|送信完了|送信しました|success|complete|thank/i.test(finalPageContent);
+    const hasErrorKeywords = /エラー|失敗|error|failed|invalid/i.test(finalPageContent);
 
     if (hasSuccessKeywords) {
       return { success: true, message: `送信成功を確認（成功キーワード検知）` };

@@ -170,13 +170,18 @@ async function exploreForm(page: any): Promise<ExploreResult> {
           currentUrl = currentUrl.slice(0, -1);
         }
 
-        // 現在のURLと異なり、かつHTTPで始まるリンクを返す
-        if (currentUrl !== normalizedHref && normalizedHref.startsWith('http')) {
-          log(`コンタクトリンク発見: ${normalizedHref}`);
+        // 現在のURLと異なり、かつ有効なリンクを返す
+        if (currentUrl !== normalizedHref) {
+          // 相対パスを絶対パスに変換
+          const absoluteUrl = normalizedHref.startsWith('http')
+            ? normalizedHref
+            : new URL(normalizedHref, currentUrl).href;
+
+          log(`コンタクトリンク発見: ${absoluteUrl}`);
           return {
             success: true,
             currentForm: false,
-            contactLink: normalizedHref
+            contactLink: absoluteUrl
           };
         }
       }
@@ -419,10 +424,63 @@ async function processTarget(page: any, target: Target, profile: Profile) {
     // reCAPTCHA処理（無料オプション）
     await handleRecaptchaFree(page);
 
+    // フォーム入力状態の確認（デバッグ用）
+    log('フォーム入力状態を確認中...');
+    const formInputs = await page.locator('input, textarea, select').evaluateAll((elements: Element[]) =>
+      elements.map((el: Element) => ({
+        tagName: el.tagName,
+        type: (el as HTMLInputElement).type || 'N/A',
+        name: (el as HTMLInputElement).name || 'N/A',
+        value: (el as HTMLInputElement).value || '',
+        disabled: (el as HTMLInputElement).disabled,
+        visible: (el as HTMLElement).offsetParent !== null
+      }))
+    );
+
+    // 必須フィールドの入力状態を確認
+    const unfilledRequired = formInputs.filter((input: any) =>
+      input.visible &&
+      !input.disabled &&
+      (input.type === 'text' || input.type === 'email' || input.type === 'tel' || input.tagName === 'TEXTAREA') &&
+      input.value.trim() === ''
+    );
+
+    if (unfilledRequired.length > 0) {
+      log(`警告: 未入力の必須フィールドが ${unfilledRequired.length} 個あります`);
+      unfilledRequired.forEach((input: any) => {
+        log(`  - ${input.tagName} (${input.type}): ${input.name}`);
+      });
+    }
+
+    // 送信ボタンクリック前にボタンの状態を確認
+    log('送信ボタンの状態を確認中...');
+    const submitButtons = await page.locator('input[type="submit"], button[type="submit"], button').evaluateAll((buttons: Element[]) =>
+      buttons.map((btn: Element) => ({
+        tagName: btn.tagName,
+        type: (btn as HTMLInputElement).type || 'N/A',
+        disabled: (btn as HTMLInputElement).disabled,
+        visible: (btn as HTMLElement).offsetParent !== null,
+        text: (btn as HTMLElement).textContent?.trim() || (btn as HTMLInputElement).value || 'N/A'
+      }))
+    );
+
+    const enabledButtons = submitButtons.filter((btn: any) => btn.visible && !btn.disabled);
+    log(`有効な送信ボタン数: ${enabledButtons.length}`);
+
+    if (enabledButtons.length === 0) {
+      log('警告: 有効な送信ボタンが見つかりません');
+      return; // 送信ボタンがない場合は処理を中断
+    }
+
     // 送信ボタンクリック
+    log('送信ボタンをクリックします...');
     await clickSubmitButton(page);
 
-    // 確認画面対応
+    // 送信後のページ遷移を待つ（確認画面または完了画面の表示を待つ）
+    log('送信ボタンをクリックしました。ページ遷移を待機中...');
+    await page.waitForTimeout(3000); // 3秒待機
+
+    // 確認画面対応（送信後の状態でチェック）
     const confirmResult = await handleConfirmationPage(page);
 
     // 結果ログ出力（成功/失敗の明確な表示）
