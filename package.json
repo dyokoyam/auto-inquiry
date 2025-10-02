@@ -17,8 +17,6 @@
   "author": "Sales_Bot Team",
   "license": "ISC",
   "dependencies": {
-    "2captcha": "^3.0.5-2",
-    "axios": "^1.12.2",
     "playwright": "^1.55.1"
   },
   "devDependencies": {

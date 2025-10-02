@@ -10,7 +10,6 @@ Chrome Extensionから抽出されたお問い合わせフォーム送信機能�
 
 - **自動フォーム送信**: URLリストに基づき、お問い合わせフォームを自動入力・送信。
 - **DOMヒューリスティクス**: フォーム要素の優先順位（textarea優先、ラベルキーワードなど）で入力。
-- **CAPTCHA対応**: 2CaptchaなどのサービスでreCAPTCHAを自動解決。
 - **スケジュール実行**: GitHub Actionsでcronジョブとして定期実行。
 - **エラーハンドリング**: タイムアウト、失敗時のログ出力とリトライ。
 
@@ -32,11 +31,8 @@ Chrome Extensionから抽出されたお問い合わせフォーム送信機能�
    npx playwright install
    ```
 
-3. **環境変数の設定** (任意、CAPTCHA使用時):
-   - `.env`ファイルを作成し、`CAPTCHA_API_KEY`を設定（2CaptchaのAPIキー）。
-
-4. **データファイルの編集**:
-   - `automation/data/targets.json`: ターゲットURLリストを編集。
+3. **データファイルの編集**:
+   - `automation/data/targets.csv`: ターゲットURLリストを編集。
    - `automation/data/profiles.json`: 送信プロフィール（名前、メールなど）を編集。
 
 ## 使い方
@@ -60,17 +56,17 @@ Chrome Extensionから抽出されたお問い合わせフォーム送信機能�
 ## ファイル構成
 
 ```
-Sales_Bot/copy/
+Sales_Bot/auto-inquiry/
 ├── automation/
 │   ├── auto-inquiry.ts          # メインスクリプト（フォーム送信処理）
 │   ├── dom-fill.ts              # DOM操作のヒューリスティクス
-│   ├── captcha-solver.ts        # CAPTCHA解決機能
 │   └── data/
-│       ├── targets.json         # ターゲットURLリスト
+│       ├── targets.csv          # ターゲットURLリスト（CSV形式）
 │       └── profiles.json        # 送信プロフィールデータ
 ├── .github/workflows/
 │   └── scheduled-run.yml        # GitHub Actionsワークフロー
 ├── .gitignore                   # 無視ファイル設定
+├── logs/                        # ログ出力ディレクトリ
 ├── package.json                 # 依存関係とスクリプト
 ├── tsconfig.json                # TypeScript設定
 └── README.md                    # このファイル
@@ -79,13 +75,12 @@ Sales_Bot/copy/
 ## 注意事項
 
 - **コンプライアンス**: 各ウェブサイトの利用規約を遵守してください。スパム行為は避け、適切な頻度で使用。
-- **CAPTCHA**: 2Captchaなどの有料サービスが必要な場合があります。無料オプションも利用可能ですが、精度が低い場合あり。
 - **エラー対応**: サイトの変更で動作しなくなる可能性あり。定期的にテスト実行を推奨。
 - **責任**: ツールの使用による損害は自己責任でお願いします。
 
 ## カスタマイズ
 
-- **ターゲット追加**: `targets.json`に新しいURLを追加。
+- **ターゲット追加**: `targets.csv`に新しいURLを追加。
 - **プロフィール変更**: `profiles.json`で送信データをカスタマイズ。
 - **スケジュール調整**: `.github/workflows/scheduled-run.yml`のcronを変更。
 
