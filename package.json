@@ -17,7 +17,9 @@
   "author": "Sales_Bot Team",
   "license": "ISC",
   "dependencies": {
-    "playwright": "^1.55.1"
+    "csv-parser": "^3.2.0",
+    "playwright": "^1.55.1",
+    "tesseract.js": "^5.0.4"
   },
   "devDependencies": {
     "@types/node": "^20.19.19",

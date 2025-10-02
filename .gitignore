@@ -66,6 +66,9 @@ temp/
 test-results/
 playwright-report/
 
+# Tesseract.js (OCRデータ)
+tessdata/
+
 # Supabase (if not needed)
 # supabase/
 
