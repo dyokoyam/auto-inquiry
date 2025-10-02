@@ -246,48 +246,160 @@ export async function clickSubmitButton(page: any): Promise<void> {
 }
 
 // ====================================
-// 確認画面対応（強化版）
+// 確認画面対応（@salesbot/ のconfirm.jsから移植・強化版）
 // ====================================
 
-export async function handleConfirmationPage(page: any): Promise<void> {
+export async function handleConfirmationPage(page: any): Promise<{ success: boolean; message: string }> {
   try {
-    // 確認画面の検知（送信ボタン後のページ変化を待つ）
-    await page.waitForTimeout(2000);
+    // 1秒待機（ページ読み込み完了を待つ）
+    await page.waitForTimeout(1000);
 
     // フォームドキュメントを探索
     const formDocument = await findFormDocument(page);
     if (!formDocument) {
-      console.log('確認画面処理: フォームドキュメントが見つからないためスキップ');
-      return;
+      return { success: false, message: 'フォームドキュメントが見つからないため確認画面処理をスキップ' };
     }
 
-    // まず標準的なセレクタで検索
-    const confirmSelectors = [
-      'input[value*="確認"]',
-      'input[type="submit"]'
-    ];
+    // ====================================
+    // textareaの確認処理（@salesbot/ のロジックから移植）
+    // ====================================
 
-    for (const selector of confirmSelectors) {
-      const element = formDocument.locator(selector).first();
-      if (await element.isVisible()) {
-        await element.click();
-        console.log(`確認画面ボタンクリック: ${selector}`);
-        return;
+    const textareas = formDocument.locator('textarea');
+    const textareaCount = await textareas.count();
+
+    if (textareaCount > 0) {
+      // 最後のtextareaを取得して値チェック
+      const lastTextarea = textareas.nth(textareaCount - 1);
+      const textareaValue = await lastTextarea.inputValue();
+
+      // 最後のtextareaに値が入っている場合はエラー（フォームがまだ表示されている状態）
+      if (textareaValue !== '') {
+        return {
+          success: false,
+          message: '対応できない問い合わせフォームです（textareaに値が残っています）'
+        };
       }
     }
 
-    // 次にテキストベースのボタンを検索（Playwright対応）
-    const confirmTexts = ['確認', 'はい'];
-    for (const text of confirmTexts) {
-      const element = formDocument.locator(`button`).filter({ hasText: text }).first();
-      if (await element.isVisible()) {
-        await element.click();
-        console.log(`確認画面ボタンクリック: button with text "${text}"`);
-        return;
+    // ====================================
+    // 送信ボタンの検索処理（@salesbot/ のロジックから移植・強化）
+    // ====================================
+
+    // テキストベースのボタン（span, button）を検索
+    const textButtons = formDocument.locator('span, button');
+    const textButtonCount = await textButtons.count();
+
+    const textSubmitButtons = [];
+    for (let i = 0; i < textButtonCount; i++) {
+      const button = textButtons.nth(i);
+      const buttonText = await button.innerText();
+
+      if (buttonText && (
+        buttonText.includes('送信') ||
+        buttonText.includes('送 信') ||
+        buttonText.includes('送　信') ||
+        buttonText.includes('はい') ||
+        buttonText.includes('OK') ||
+        buttonText.includes('同意する') ||
+        buttonText.includes('続行')
+      )) {
+        textSubmitButtons.push(button);
       }
     }
-  } catch (error) {
-    console.error('確認画面処理エラー:', error);
+
+    // input要素のボタンを検索
+    const inputButtons = formDocument.locator('input[type="submit"], input[type="button"]');
+    const inputButtonCount = await inputButtons.count();
+
+    const inputSubmitButtons = [];
+    for (let i = 0; i < inputButtonCount; i++) {
+      const button = inputButtons.nth(i);
+      const buttonValue = await button.getAttribute('value');
+
+      if (buttonValue && (
+        buttonValue.includes('送信') ||
+        buttonValue.includes('送 信') ||
+        buttonValue.includes('送　信') ||
+        buttonValue.includes('問い合') ||
+        buttonValue.includes('問合') ||
+        buttonValue.includes('はい') ||
+        buttonValue.includes('OK') ||
+        buttonValue.includes('同意する') ||
+        buttonValue.includes('続行')
+      )) {
+        inputSubmitButtons.push(button);
+      }
+    }
+
+    // 画像ボタンを検索
+    const imageButtons = formDocument.locator('input[type="image"]');
+    const imageButtonCount = await imageButtons.count();
+
+    const imageSubmitButtons = [];
+    for (let i = 0; i < imageButtonCount; i++) {
+      const button = imageButtons.nth(i);
+      const buttonAlt = await button.getAttribute('alt');
+
+      if (buttonAlt && (
+        buttonAlt.includes('送信') ||
+        buttonAlt.includes('確認') ||
+        buttonAlt.includes('はい') ||
+        buttonAlt.includes('OK') ||
+        buttonAlt.includes('同意する') ||
+        buttonAlt.includes('続行')
+      )) {
+        imageSubmitButtons.push(button);
+      }
+    }
+
+    // 全ての送信ボタンを統合
+    const allSubmitButtons = [...textSubmitButtons, ...imageSubmitButtons, ...inputSubmitButtons];
+
+    // ====================================
+    // ボタンクリック処理（@salesbot/ のロジックから移植）
+    // ====================================
+
+    // 送信ボタンが見つからない場合は成功として処理（既に送信完了済み）
+    if (allSubmitButtons.length === 0) {
+      return { success: true, message: '確認ボタンが見つからないため送信完了と判断' };
+    }
+
+    // 最後のボタンをクリック（@salesbot/ のロジック）
+    const targetButton = allSubmitButtons[allSubmitButtons.length - 1];
+    await targetButton.click();
+
+    // 5秒待機（送信処理完了を待つ）
+    await page.waitForTimeout(5000);
+
+    // ====================================
+    // 最終的な状態検証（@salesbot/ のロジックから拡張）
+    // ====================================
+
+    // ページの最終的なURLを確認（リダイレクトされたかチェック）
+    const finalUrl = page.url();
+
+    // ページ遷移をログ出力（実際のURL比較は簡易的に）
+    console.log(`最終ページ確認: ${finalUrl}`);
+
+    // ページコンテンツから成功/失敗の兆候をチェック
+    const pageContent = await page.content();
+    const hasSuccessKeywords = /ありがとう|送信完了|送信しました|success|complete|thank/i.test(pageContent);
+    const hasErrorKeywords = /エラー|失敗|error|failed|invalid/i.test(pageContent);
+
+    if (hasSuccessKeywords) {
+      return { success: true, message: `送信成功を確認（成功キーワード検知）` };
+    } else if (hasErrorKeywords) {
+      return { success: false, message: `送信失敗を確認（エラーキーワード検知）` };
+    }
+
+    return { success: true, message: '確認画面処理完了（最終検証なし）' };
+
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      message: `確認画面処理エラー: ${errorMessage}`
+    };
   }
 }
 

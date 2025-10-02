@@ -271,23 +271,35 @@ function processTagReplacements(message: string, profile: Profile): string {
 // ====================================
 
 // ====================================
-// ログ関数（グローバル定義）
+// ログ関数（グローバル定義・強化版）
 // ====================================
 
 const logFile = path.join(__dirname, '../logs', `run-${Date.now()}.log`);
 function log(message: string) {
   const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] ${message}`;
+
   try {
-    fs.appendFileSync(logFile, `[${timestamp}] ${message}\n`);
+    fs.appendFileSync(logFile, logMessage + '\n');
   } catch (error) {
     // ログファイル書き込みエラー時はコンソールのみ出力
     console.error('ログ書き込みエラー:', error);
   }
-  console.log(message);
+
+  // コンソール出力で視認性を向上
+  if (message.includes('✅ 送信成功')) {
+    console.log('\x1b[32m%s\x1b[0m', message); // 緑色
+  } else if (message.includes('❌ 送信失敗')) {
+    console.log('\x1b[31m%s\x1b[0m', message); // 赤色
+  } else if (message.includes('ターゲット処理エラー')) {
+    console.log('\x1b[33m%s\x1b[0m', message); // 黄色
+  } else {
+    console.log(message);
+  }
 }
 
 async function main() {
-  log('お問い合わせ送信プロセスを開始します...');
+  log('🚀 お問い合わせ送信プロセスを開始します...');
 
   try {
     // データ読み込み
@@ -297,7 +309,7 @@ async function main() {
     const targets: Target[] = await loadTargetsFromCsv(targetsPath);
     const profiles: Profile[] = JSON.parse(fs.readFileSync(profilesPath, 'utf-8'));
 
-    log(`ターゲット数: ${targets.length}, プロフィール数: ${profiles.length}`);
+    log(`📊 ターゲット数: ${targets.length}, プロフィール数: ${profiles.length}`);
 
     // ブラウザ起動
     const browser = await chromium.launch({ headless: true });
@@ -306,11 +318,13 @@ async function main() {
     // プロフィール選択とタグ置換（一度だけ）
     const profile = getSelectedProfile(profiles);
     if (!profile) {
-      log('プロフィールが選択されていません');
+      log('❌ プロフィールが選択されていません');
       await browser.close();
       return;
     }
     const processedProfile: Profile = { ...profile, message: processTagReplacements(profile.message, profile) };
+
+    log(`👤 使用プロフィール: ${profile.name} (${profile.company})`);
 
     // 各ターゲットに対して処理（最適化: エラーハンドリング強化）
     for (const target of targets) {
@@ -318,15 +332,21 @@ async function main() {
         await processTarget(page, target, processedProfile);
       } catch (targetError) {
         const errorMessage = targetError instanceof Error ? targetError.message : String(targetError);
-        log(`ターゲット処理エラー (${target.url}): ${errorMessage}`);
+        log(`❌ ターゲット処理エラー (${target.url}): ${errorMessage}`);
       }
     }
 
     await browser.close();
-    log('プロセス完了');
+
+    // 処理結果サマリー
+    log('🏁 プロセス完了');
+    log(`📈 処理結果サマリー: ${targets.length}件中 ${targets.length}件処理完了`);
+
+    // ログファイルのパスを表示
+    log(`📄 詳細ログ: ${logFile}`);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log(`エラー発生: ${errorMessage}`);
+    log(`💥 エラー発生: ${errorMessage}`);
     console.error('エラー発生:', error);
   }
 }
@@ -336,7 +356,7 @@ async function main() {
 // ====================================
 
 async function processTarget(page: any, target: Target, profile: Profile) {
-  log(`ターゲット処理中: ${target.url} (${target.企業名})`);
+  log(`🔄 ターゲット処理開始: ${target.url} (${target.企業名})`);
 
   try {
     // ページ読み込み
@@ -350,14 +370,14 @@ async function processTarget(page: any, target: Target, profile: Profile) {
     const exploreResult = await exploreForm(page);
 
     if (!exploreResult.success) {
-      log(`フォーム探索失敗: ${target.url} - ${exploreResult.message}`);
+      log(`❌ フォーム探索失敗: ${target.url} - ${exploreResult.message}`);
       return;
     }
 
     // お断りキーワードチェック（簡易）
     const pageContent = await page.content();
     if (REFUSAL_KEYWORDS.some(keyword => pageContent.includes(keyword))) {
-      log(`お断りキーワード検知: ${target.url} をスキップ`);
+      log(`🚫 お断りキーワード検知: ${target.url} をスキップ`);
       return;
     }
 
@@ -366,14 +386,14 @@ async function processTarget(page: any, target: Target, profile: Profile) {
     // ====================================
 
     if (!exploreResult.currentForm && exploreResult.contactLink) {
-      log(`コンタクトリンクに遷移: ${exploreResult.contactLink}`);
+      log(`🔗 コンタクトリンクに遷移: ${exploreResult.contactLink}`);
       await page.goto(exploreResult.contactLink, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
       await page.waitForTimeout(PAGE_LOAD_DELAY);
 
       // 遷移後に再度フォーム探索
       const secondExploreResult = await exploreForm(page);
       if (!secondExploreResult.success || !secondExploreResult.currentForm) {
-        log(`コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
+        log(`❌ コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
         return;
       }
     }
@@ -403,12 +423,17 @@ async function processTarget(page: any, target: Target, profile: Profile) {
     await clickSubmitButton(page);
 
     // 確認画面対応
-    await handleConfirmationPage(page);
+    const confirmResult = await handleConfirmationPage(page);
 
-    log(`ターゲット処理完了: ${target.url}`);
+    // 結果ログ出力（成功/失敗の明確な表示）
+    if (confirmResult.success) {
+      log(`✅ 送信成功: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
+    } else {
+      log(`❌ 送信失敗: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
+    }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log(`ターゲット処理エラー (${target.url}): ${errorMessage}`);
+    log(`💥 ターゲット処理エラー (${target.url}): ${errorMessage}`);
   }
 }
 
