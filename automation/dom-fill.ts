@@ -159,16 +159,26 @@ export async function clickSubmitButton(page: any): Promise<void> {
   const submitSelectors = [
     'input[type="submit"]',
     'button[type="submit"]',
-    ...SUBMIT_KEYWORDS.text.map(text => `button:contains("${text}")`),
     ...SUBMIT_KEYWORDS.value.map(value => `input[value*="${value}"]`),
     ...SUBMIT_KEYWORDS.alt.map(alt => `input[alt*="${alt}"]`)
   ];
 
+  // まず標準的なセレクタで検索
   for (const selector of submitSelectors) {
     const element = page.locator(selector).first();
     if (await element.isVisible()) {
       await element.click();
       console.log(`送信ボタンクリック: ${selector}`);
+      return;
+    }
+  }
+
+  // 次にテキストベースのボタンを検索（Playwright対応）
+  for (const text of SUBMIT_KEYWORDS.text) {
+    const element = page.locator(`button`).filter({ hasText: text }).first();
+    if (await element.isVisible()) {
+      await element.click();
+      console.log(`送信ボタンクリック: button with text "${text}"`);
       return;
     }
   }
@@ -185,11 +195,9 @@ export async function handleConfirmationPage(page: any): Promise<void> {
     // 確認画面の検知（送信ボタン後のページ変化を待つ）
     await page.waitForTimeout(2000);
 
-    // 確認ボタンを探す
+    // まず標準的なセレクタで検索
     const confirmSelectors = [
-      'button:contains("確認")',
       'input[value*="確認"]',
-      'button:contains("はい")',
       'input[type="submit"]'
     ];
 
@@ -198,6 +206,17 @@ export async function handleConfirmationPage(page: any): Promise<void> {
       if (await element.isVisible()) {
         await element.click();
         console.log(`確認画面ボタンクリック: ${selector}`);
+        return;
+      }
+    }
+
+    // 次にテキストベースのボタンを検索（Playwright対応）
+    const confirmTexts = ['確認', 'はい'];
+    for (const text of confirmTexts) {
+      const element = page.locator(`button`).filter({ hasText: text }).first();
+      if (await element.isVisible()) {
+        await element.click();
+        console.log(`確認画面ボタンクリック: button with text "${text}"`);
         return;
       }
     }

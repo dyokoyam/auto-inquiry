@@ -2,11 +2,13 @@
   "name": "sales-bot-automation",
   "version": "1.0.0",
   "description": "Chrome Extensionから抽出されたお問い合わせ送信機能を、Node.js + Playwrightでバックグラウンド自動実行。GitHub Actionsで定期スケジュール化。",
-  "main": "automation/auto-inquiry.ts",
+  "main": "dist/automation/auto-inquiry.js",
   "scripts": {
-    "start": "node automation/auto-inquiry.ts",
+    "start": "ts-node automation/auto-inquiry.ts",
+    "start:compiled": "node dist/automation/auto-inquiry.js",
     "test": "npx playwright test",
-    "build": "tsc"
+    "build": "tsc",
+    "build:start": "npm run build && npm run start:compiled"
   },
   "keywords": [
     "automation",
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.19",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }
