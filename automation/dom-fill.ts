@@ -1,6 +1,18 @@
 // DOM操作のヒューリスティクス（send.jsから抽出・最適化）
 // 元のsalesbotのFIELD_KEYWORDSとSUBMIT_KEYWORDSを基に強化
 
+// 型定義
+interface Profile {
+  name: string;
+  company: string;
+  department: string;
+  position: string;
+  email: string;
+  tel: string;
+  fullAddress: string;
+  [key: string]: string | undefined;
+}
+
 // ====================================
 // 定数定義（salesbotから移植）
 // ====================================
@@ -62,13 +74,15 @@ function identifyFieldType(labelText: string): string | null {
  * @param {string} fieldType - フィールドタイプ
  * @returns {string} 入力値
  */
-function getProfileValue(profile: any, fieldType: string): string {
+function getProfileValue(profile: Profile, fieldType: string): string {
   switch (fieldType) {
     case 'name': return profile.name || '';
     case 'company': return profile.company || '';
+    case 'department': return profile.department || '';
+    case 'position': return profile.position || '';
     case 'email': return profile.email || '';
-    case 'tel': return profile.phone || '';
-    case 'fullAddress': return `${profile.address?.prefecture || ''} ${profile.address?.city || ''} ${profile.address?.address || ''}`.trim();
+    case 'tel': return profile.tel || '';
+    case 'fullAddress': return profile.fullAddress || '';
     default: return '';
   }
 }
@@ -77,7 +91,7 @@ function getProfileValue(profile: any, fieldType: string): string {
 // フォーム入力関数（強化版）
 // ====================================
 
-export async function fillForm(page: any, profile: any) {
+export async function fillForm(page: any, profile: Profile) {
   console.log('フォーム入力開始（強化版）');
 
   // メッセージフィールドの優先入力（textarea優先）
@@ -141,7 +155,7 @@ export async function fillForm(page: any, profile: any) {
 // 送信ボタン特定とクリック（強化版）
 // ====================================
 
-export async function clickSubmitButton(page: any) {
+export async function clickSubmitButton(page: any): Promise<void> {
   const submitSelectors = [
     'input[type="submit"]',
     'button[type="submit"]',
@@ -166,7 +180,7 @@ export async function clickSubmitButton(page: any) {
 // 確認画面対応（強化版）
 // ====================================
 
-export async function handleConfirmationPage(page: any) {
+export async function handleConfirmationPage(page: any): Promise<void> {
   try {
     // 確認画面の検知（送信ボタン後のページ変化を待つ）
     await page.waitForTimeout(2000);

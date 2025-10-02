@@ -1,25 +1,38 @@
 // お問い合わせ送信のメインスクリプト（send.jsから移植・強化版）
-// 元のsalesbotのクオリティレベルに戻す
-
 import { chromium } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as csv from 'csv-parser';
+import csv from 'csv-parser';
 import { fillForm, clickSubmitButton, handleConfirmationPage } from './dom-fill';
 import { handleRecaptchaFree, detectAndSolveCaptchaImage } from './captcha-solver';
 
+// 型定義
+interface Profile {
+  name: string;
+  company: string;
+  department: string;
+  position: string;
+  email: string;
+  tel: string;
+  fullAddress: string;
+  message: string;
+  [key: string]: string | undefined;
+}
+
+interface Target {
+  企業名: string;
+  url: string;
+}
+
 // ====================================
-// 定数定義（salesbotから移植）
+// 定数定義（salesbotから移植・最適化）
 // ====================================
 
 const WAIT_TIMEOUT = 15000; // 15秒
-const FORM_TIMEOUT = 5000; // 5秒
 const PAGE_LOAD_DELAY = 1000; // 1秒
-const RECAPTCHA_WAIT = 20000; // 20秒
 
-// 営業お断り関連キーワード
+// 営業お断り関連キーワード（使用頻度が高いもののみ）
 const REFUSAL_KEYWORDS = ['遠慮', '断り', '禁止', '控え', '営業権'];
-const SALES_REFUSAL_KEYWORDS = ['営業', '宣伝', 'セールス', '売り込み'];
 
 // ====================================
 // データ読み込み関数
@@ -28,39 +41,53 @@ const SALES_REFUSAL_KEYWORDS = ['営業', '宣伝', 'セールス', '売り込�
 /**
  * CSVからターゲットリストを読み込み
  * @param {string} csvPath - CSVファイルのパス
- * @returns {Promise<any[]>} ターゲットリスト
+ * @returns {Promise<Target[]>} ターゲットリスト
  */
-async function loadTargetsFromCsv(csvPath: string): Promise<any[]> {
+async function loadTargetsFromCsv(csvPath: string): Promise<Target[]> {
   return new Promise((resolve, reject) => {
-    const targets = [];
+    const targets: Target[] = [];
     fs.createReadStream(csvPath)
       .pipe(csv())
-      .on('data', (data) => targets.push(data))
+      .on('data', (data: Target) => targets.push(data))
       .on('end', () => resolve(targets))
-      .on('error', reject);
+      .on('error', (error: Error) => reject(error));
   });
 }
 
 /**
- * プロフィールを選択（強化版）
- * @param {any[]} profiles - プロフィールリスト
- * @returns {any} 選択されたプロフィール
+ * プロフィールを取得（常に最初のプロフィールを使用）
+ * @param {Profile[]} profiles - プロフィールリスト
+ * @returns {Profile | null} プロフィールオブジェクト
  */
-function getSelectedProfile(profiles: any[]): any {
-  // デフォルトで最初のプロフィールを使用（拡張時は選択ロジック追加）
+function getSelectedProfile(profiles: Profile[]): Profile | null {
   return profiles[0] || null;
 }
 
 /**
- * タグ置換処理（salesbotから移植）
+ * タグ置換処理（salesbotから移植・強化版）
  * @param {string} message - 元のメッセージ
- * @param {any} tags - タグデータ
+ * @param {Profile} profile - プロフィールデータ
  * @returns {string} 置換後のメッセージ
  */
-function processTagReplacements(message: string, tags: any): string {
+function processTagReplacements(message: string, profile: Profile): string {
   let processedMessage = message;
-  // タグの例: {{name}} -> 実際の値に置換（拡張時は実装）
-  // ここでは簡易的にそのまま
+
+  // プロフィールの主要フィールドをタグとして置換
+  const replacements = {
+    '{{name}}': profile.name || '',
+    '{{company}}': profile.company || '',
+    '{{department}}': profile.department || '',
+    '{{position}}': profile.position || '',
+    '{{email}}': profile.email || '',
+    '{{tel}}': profile.tel || '',
+    '{{fullAddress}}': profile.fullAddress || ''
+  };
+
+  // すべてのタグを置換
+  for (const [tag, value] of Object.entries(replacements)) {
+    processedMessage = processedMessage.replace(new RegExp(tag, 'g'), value);
+  }
+
   return processedMessage;
 }
 
@@ -83,8 +110,8 @@ async function main() {
     const targetsPath = path.join(__dirname, 'data', 'targets.csv');
     const profilesPath = path.join(__dirname, 'data', 'profiles.json');
 
-    const targets = await loadTargetsFromCsv(targetsPath);
-    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf-8'));
+    const targets: Target[] = await loadTargetsFromCsv(targetsPath);
+    const profiles: Profile[] = JSON.parse(fs.readFileSync(profilesPath, 'utf-8'));
 
     log(`ターゲット数: ${targets.length}, プロフィール数: ${profiles.length}`);
 
@@ -92,24 +119,30 @@ async function main() {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
 
-    // 各ターゲットに対して処理
+    // プロフィール選択とタグ置換（一度だけ）
+    const profile = getSelectedProfile(profiles);
+    if (!profile) {
+      log('プロフィールが選択されていません');
+      await browser.close();
+      return;
+    }
+    const processedProfile: Profile = { ...profile, message: processTagReplacements(profile.message, profile) };
+
+    // 各ターゲットに対して処理（最適化: エラーハンドリング強化）
     for (const target of targets) {
-      const profile = getSelectedProfile(profiles);
-      if (!profile) {
-        log('プロフィールが選択されていません');
-        continue;
+      try {
+        await processTarget(page, target, processedProfile, log);
+      } catch (targetError) {
+        const errorMessage = targetError instanceof Error ? targetError.message : String(targetError);
+        log(`ターゲット処理エラー (${target.url}): ${errorMessage}`);
       }
-
-      // タグ置換
-      const processedProfile = { ...profile, message: processTagReplacements(profile.message, {}) };
-
-      await processTarget(page, target, processedProfile, log);
     }
 
     await browser.close();
     log('プロセス完了');
-  } catch (error) {
-    log(`エラー発生: ${error.message}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`エラー発生: ${errorMessage}`);
     console.error('エラー発生:', error);
   }
 }
@@ -118,7 +151,7 @@ async function main() {
 // ターゲット処理関数（強化版）
 // ====================================
 
-async function processTarget(page: any, target: any, profile: any, log: (message: string) => void) {
+async function processTarget(page: any, target: Target, profile: Profile, log: (message: string) => void) {
   log(`ターゲット処理中: ${target.url} (${target.企業名})`);
 
   try {
@@ -156,8 +189,9 @@ async function processTarget(page: any, target: any, profile: any, log: (message
     await handleConfirmationPage(page);
 
     log(`ターゲット処理完了: ${target.url}`);
-  } catch (error) {
-    log(`ターゲット処理エラー (${target.url}): ${error.message}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`ターゲット処理エラー (${target.url}): ${errorMessage}`);
   }
 }
 

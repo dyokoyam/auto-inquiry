@@ -1,15 +1,31 @@
 [
   {
     "name": "田中太郎",
+    "sei": "田中",
+    "mei": "太郎",
+    "seiKana": "タナカ",
+    "meiKana": "タロウ",
+    "seiHira": "たなか",
+    "meiHira": "たろう",
+    "furigana": "たなかたろう",
+    "hiragana": "たなかたろう",
     "company": "サンプル株式会社",
+    "department": "営業部",
+    "industry": "IT・テクノロジー",
+    "position": "課長",
+    "member": "100",
     "email": "tanaka@example.com",
-    "phone": "03-1234-5678",
-    "message": "お問い合わせ内容です。",
-    "address": {
-      "zip": "100-0001",
-      "prefecture": "東京都",
-      "city": "千代田区"
-    }
+    "tel": "03-1234-5678",
+    "fax": "03-1234-5679",
+    "zip": "100-0001",
+    "pref": "東京都",
+    "city": "千代田区",
+    "address": "1-2-3",
+    "building": "サンプルビル",
+    "fullAddress": "東京都千代田区1-2-3 サンプルビル",
+    "url": "https://example.com",
+    "subject": "お問い合わせについて",
+    "message": "お問い合わせ内容です。{{name}}からのお問い合わせでございます。会社名: {{company}}、部署: {{department}}、役職: {{position}}、メール: {{email}}、電話: {{tel}}、住所: {{fullAddress}}。ご連絡をお待ちしております。"
   }
 ]
 

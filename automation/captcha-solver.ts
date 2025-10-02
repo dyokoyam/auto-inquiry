@@ -3,6 +3,15 @@
 
 import { createWorker } from 'tesseract.js';
 
+// 型定義
+interface Page {
+  locator: (selector: string) => { first: () => any; isVisible: () => Promise<boolean>; fill: (text: string) => Promise<void>; click: () => Promise<void>; screenshot: (options?: any) => Promise<Buffer>; };
+  frameLocator: (src: string) => { locator: (selector: string) => { first: () => any; getAttribute: (attr: string) => Promise<string>; isVisible: () => Promise<boolean>; }; };
+  waitForTimeout: (ms: number) => Promise<void>;
+  pause: () => Promise<void>;
+  url: () => string;
+}
+
 // ====================================
 // 定数定義
 // ====================================
@@ -39,7 +48,7 @@ export async function solveCaptchaFree(imageBuffer: Buffer): Promise<string | nu
  * 人間らしい入力シミュレーション
  * @param {any} page - Playwrightページオブジェクト
  */
-export async function simulateHumanInput(page: any) {
+export async function simulateHumanInput(page: Page): Promise<void> {
   const delay = Math.random() * 3000 + 1000; // 1-4秒のランダム遅延
   await page.waitForTimeout(delay);
   console.log(`人間らしい入力遅延をシミュレート: ${delay}ms`);
@@ -49,7 +58,7 @@ export async function simulateHumanInput(page: any) {
  * reCAPTCHAを検知して無料オプションで対応
  * @param {any} page - Playwrightページオブジェクト
  */
-export async function handleRecaptchaFree(page: any) {
+export async function handleRecaptchaFree(page: Page): Promise<void> {
   try {
     const recaptchaFrame = page.frameLocator('[src*="recaptcha"]');
     if (await recaptchaFrame.locator('.g-recaptcha').isVisible()) {
@@ -73,7 +82,7 @@ export async function handleRecaptchaFree(page: any) {
  * @param {any} page - Playwrightページオブジェクト
  * @returns {Promise<string|null>} 解決されたテキスト
  */
-export async function detectAndSolveCaptchaImage(page: any): Promise<string | null> {
+export async function detectAndSolveCaptchaImage(page: Page): Promise<string | null> {
   try {
     // CAPTCHA画像のセレクタ（一般的なもの）
     const captchaSelectors = [

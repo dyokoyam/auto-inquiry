@@ -37,8 +37,8 @@ Chrome Extensionから抽出されたお問い合わせフォーム送信機能�
    ```
 
 3. **データファイルの編集**:
-   - `automation/data/targets.csv`: ターゲットURLリストを編集（企業名,url形式）。
-   - `automation/data/profiles.json`: 送信プロフィール（名前、メールなど）を編集。
+   - `automation/data/targets.csv`: ターゲットURLリストを編集（企業名,url形式）。すべてのターゲットに対して同じプロフィールを使用。
+   - `automation/data/profiles.json`: 送信プロフィール（名前、会社、メール、電話、住所、メッセージなど）を編集。タグ置換（{{name}}など）対応。
 
 ## 使い方
 
