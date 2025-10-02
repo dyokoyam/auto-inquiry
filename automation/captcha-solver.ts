@@ -1,5 +1,6 @@
 // CAPTCHA解決機能（無料オプション中心）
 // 元のsalesbotのCAPTCHA解決を基に無料実装
+// フォームドキュメント対応も追加
 
 import { createWorker } from 'tesseract.js';
 
@@ -80,10 +81,13 @@ export async function handleRecaptchaFree(page: Page): Promise<void> {
 /**
  * フォーム内のCAPTCHA画像を検知して解決
  * @param {any} page - Playwrightページオブジェクト
+ * @param {any} formDocument - フォームドキュメント（オプション）
  * @returns {Promise<string|null>} 解決されたテキスト
  */
-export async function detectAndSolveCaptchaImage(page: Page): Promise<string | null> {
+export async function detectAndSolveCaptchaImage(page: Page, formDocument?: any): Promise<string | null> {
   try {
+    const targetDocument = formDocument || page;
+
     // CAPTCHA画像のセレクタ（一般的なもの）
     const captchaSelectors = [
       'img[alt*="captcha"]',
@@ -94,7 +98,7 @@ export async function detectAndSolveCaptchaImage(page: Page): Promise<string | n
     ];
 
     for (const selector of captchaSelectors) {
-      const img = page.locator(selector).first();
+      const img = targetDocument.locator(selector).first();
       if (await img.isVisible()) {
         console.log(`CAPTCHA画像検知: ${selector}`);
 
@@ -105,7 +109,7 @@ export async function detectAndSolveCaptchaImage(page: Page): Promise<string | n
         const solvedText = await solveCaptchaFree(Buffer.from(imageBuffer, 'binary'));
         if (solvedText) {
           // 入力フィールドにテキストを入力
-          const inputField = page.locator('input[name*="captcha"], #captcha-input');
+          const inputField = targetDocument.locator('input[name*="captcha"], #captcha-input');
           if (await inputField.isVisible()) {
             await inputField.fill(solvedText);
             console.log(`CAPTCHA入力完了: ${solvedText}`);

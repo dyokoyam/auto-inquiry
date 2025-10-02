@@ -1,5 +1,6 @@
 // DOM操作のヒューリスティクス（send.jsから抽出・最適化）
 // 元のsalesbotのFIELD_KEYWORDSとSUBMIT_KEYWORDSを基に強化
+// フォームドキュメント探索機能も追加
 
 // 型定義
 interface Profile {
@@ -51,6 +52,45 @@ const SUBMIT_KEYWORDS = {
 };
 
 // ====================================
+// フォームドキュメント探索関数（salesbotのfindFormDocumentから移植）
+// ====================================
+
+/**
+ * フォームが含まれるドキュメントを探索（iframe対応）
+ * @param {any} page - Playwrightページオブジェクト
+ * @returns {Promise<any|null>} フォームドキュメントまたはnull
+ */
+export async function findFormDocument(page: any): Promise<any | null> {
+  // メインドキュメントにtextareaがあるかチェック
+  const mainTextareas = page.locator('textarea');
+  const mainTextareaCount = await mainTextareas.count();
+
+  if (mainTextareaCount > 0) {
+    return page;
+  }
+
+  // iframe内を探索
+  const iframes = page.locator('iframe');
+  const iframeCount = await iframes.count();
+
+  for (let i = 0; i < iframeCount; i++) {
+    try {
+      const frame = page.frameLocator(`iframe:nth-of-type(${i + 1})`);
+      const iframeTextareas = frame.locator('textarea');
+      const iframeTextareaCount = await iframeTextareas.count();
+
+      if (iframeTextareaCount > 0) {
+        return frame;
+      }
+    } catch (iframeError) {
+      console.warn('Cannot access iframe:', iframeError);
+    }
+  }
+
+  return null;
+}
+
+// ====================================
 // ユーティリティ関数
 // ====================================
 
@@ -94,6 +134,18 @@ function getProfileValue(profile: Profile, fieldType: string): string {
 export async function fillForm(page: any, profile: Profile) {
   console.log('フォーム入力開始（強化版）');
 
+  // ====================================
+  // フォームが含まれるドキュメントを探索（salesbotのfindFormDocumentから移植）
+  // ====================================
+
+  const formDocument = await findFormDocument(page);
+  if (!formDocument) {
+    console.log('問い合わせフォームが見つかりませんでした');
+    return;
+  }
+
+  console.log('フォームドキュメント発見:', formDocument === page ? 'メインドキュメント' : 'iframe内');
+
   // メッセージフィールドの優先入力（textarea優先）
   const textareaSelectors = [
     'textarea[name*="message"]',
@@ -103,7 +155,7 @@ export async function fillForm(page: any, profile: Profile) {
   ];
 
   for (const selector of textareaSelectors) {
-    const element = page.locator(selector).first();
+    const element = formDocument.locator(selector).first();
     if (await element.isVisible()) {
       await element.fill(profile.message || 'お問い合わせ内容です。');
       console.log(`メッセージ入力完了: ${selector}`);
@@ -112,7 +164,7 @@ export async function fillForm(page: any, profile: Profile) {
   }
 
   // ラベル付きフィールドの入力
-  const labels = page.locator('label');
+  const labels = formDocument.locator('label');
   const labelCount = await labels.count();
 
   for (let i = 0; i < labelCount; i++) {
@@ -137,7 +189,7 @@ export async function fillForm(page: any, profile: Profile) {
   for (const [fieldType, keywords] of Object.entries(FIELD_KEYWORDS)) {
     for (const keyword of keywords) {
       const selector = `input[name*="${keyword}"], textarea[name*="${keyword}"], select[name*="${keyword}"]`;
-      const element = page.locator(selector).first();
+      const element = formDocument.locator(selector).first();
       if (await element.isVisible()) {
         const value = getProfileValue(profile, fieldType);
         if (value) {
@@ -156,6 +208,13 @@ export async function fillForm(page: any, profile: Profile) {
 // ====================================
 
 export async function clickSubmitButton(page: any): Promise<void> {
+  // フォームドキュメントを探索
+  const formDocument = await findFormDocument(page);
+  if (!formDocument) {
+    console.log('フォームドキュメントが見つからないため送信ボタンを探せません');
+    return;
+  }
+
   const submitSelectors = [
     'input[type="submit"]',
     'button[type="submit"]',
@@ -165,7 +224,7 @@ export async function clickSubmitButton(page: any): Promise<void> {
 
   // まず標準的なセレクタで検索
   for (const selector of submitSelectors) {
-    const element = page.locator(selector).first();
+    const element = formDocument.locator(selector).first();
     if (await element.isVisible()) {
       await element.click();
       console.log(`送信ボタンクリック: ${selector}`);
@@ -175,7 +234,7 @@ export async function clickSubmitButton(page: any): Promise<void> {
 
   // 次にテキストベースのボタンを検索（Playwright対応）
   for (const text of SUBMIT_KEYWORDS.text) {
-    const element = page.locator(`button`).filter({ hasText: text }).first();
+    const element = formDocument.locator(`button`).filter({ hasText: text }).first();
     if (await element.isVisible()) {
       await element.click();
       console.log(`送信ボタンクリック: button with text "${text}"`);
@@ -195,6 +254,13 @@ export async function handleConfirmationPage(page: any): Promise<void> {
     // 確認画面の検知（送信ボタン後のページ変化を待つ）
     await page.waitForTimeout(2000);
 
+    // フォームドキュメントを探索
+    const formDocument = await findFormDocument(page);
+    if (!formDocument) {
+      console.log('確認画面処理: フォームドキュメントが見つからないためスキップ');
+      return;
+    }
+
     // まず標準的なセレクタで検索
     const confirmSelectors = [
       'input[value*="確認"]',
@@ -202,7 +268,7 @@ export async function handleConfirmationPage(page: any): Promise<void> {
     ];
 
     for (const selector of confirmSelectors) {
-      const element = page.locator(selector).first();
+      const element = formDocument.locator(selector).first();
       if (await element.isVisible()) {
         await element.click();
         console.log(`確認画面ボタンクリック: ${selector}`);
@@ -213,7 +279,7 @@ export async function handleConfirmationPage(page: any): Promise<void> {
     // 次にテキストベースのボタンを検索（Playwright対応）
     const confirmTexts = ['確認', 'はい'];
     for (const text of confirmTexts) {
-      const element = page.locator(`button`).filter({ hasText: text }).first();
+      const element = formDocument.locator(`button`).filter({ hasText: text }).first();
       if (await element.isVisible()) {
         await element.click();
         console.log(`確認画面ボタンクリック: button with text "${text}"`);
