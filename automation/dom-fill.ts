@@ -61,25 +61,26 @@ const SUBMIT_KEYWORDS = {
  * @returns {Promise<any|null>} フォームドキュメントまたはnull
  */
 export async function findFormDocument(page: any): Promise<any | null> {
-  // メインドキュメントにtextareaがあるかチェック
-  const mainTextareas = page.locator('textarea');
-  const mainTextareaCount = await mainTextareas.count();
-
-  if (mainTextareaCount > 0) {
-    return page;
+  // メインドキュメント: textarea もしくはフォーム要素が存在するか
+  try {
+    const hasTextarea = (await page.locator('textarea').count()) > 0;
+    const hasFormFields = (await page.locator('form input, form textarea, form select').count()) > 0;
+    if (hasTextarea || hasFormFields) {
+      return page;
+    }
+  } catch (error) {
+    console.warn('Main document probing error:', error);
   }
 
-  // iframe内を探索
+  // iframe内を探索: textarea もしくはフォーム要素が存在するか
   const iframes = page.locator('iframe');
   const iframeCount = await iframes.count();
-
   for (let i = 0; i < iframeCount; i++) {
     try {
       const frame = page.frameLocator(`iframe:nth-of-type(${i + 1})`);
-      const iframeTextareas = frame.locator('textarea');
-      const iframeTextareaCount = await iframeTextareas.count();
-
-      if (iframeTextareaCount > 0) {
+      const iframeHasTextarea = (await frame.locator('textarea').count()) > 0;
+      const iframeHasFormFields = (await frame.locator('form input, form textarea, form select').count()) > 0;
+      if (iframeHasTextarea || iframeHasFormFields) {
         return frame;
       }
     } catch (iframeError) {
@@ -187,7 +188,17 @@ export async function fillForm(page: any, profile: Profile) {
         if (await input.isVisible()) {
           const value = getProfileValue(profile, fieldType);
           if (value) {
-            await input.fill(value);
+            // SELECT は selectOption、それ以外は fill
+            const tagName = await input.evaluate((el: Element) => el.tagName);
+            if (tagName === 'SELECT') {
+              try {
+                await (input as any).selectOption({ label: value });
+              } catch {
+                try { await (input as any).selectOption({ value }); } catch {}
+              }
+            } else {
+              await input.fill(value);
+            }
             console.log(`フィールド入力: ${fieldType} = ${value}`);
           }
         }
@@ -203,10 +214,44 @@ export async function fillForm(page: any, profile: Profile) {
       if (await element.isVisible()) {
         const value = getProfileValue(profile, fieldType);
         if (value) {
-          await element.fill(value);
+          const tagName = await element.evaluate((el: Element) => el.tagName);
+          if (tagName === 'SELECT') {
+            try {
+              await (element as any).selectOption({ label: value });
+            } catch {
+              try { await (element as any).selectOption({ value }); } catch {}
+            }
+          } else {
+            await element.fill(value);
+          }
           console.log(`名前付きフィールド入力: ${fieldType} = ${value}`);
         }
       }
+    }
+  }
+
+  // メール確認・電話確認などのフォールバック入力
+  const confirmEmailSelectors = [
+    'input[name*="confirm"][type="email"]',
+    'input[name*="email-confirm"]',
+    'input[name*="mail-confirm"]',
+    'input[name*="メール確認"]',
+  ];
+  for (const sel of confirmEmailSelectors) {
+    const el = formDocument.locator(sel).first();
+    if (await el.isVisible()) {
+      try { await el.fill(profile.email || ''); } catch {}
+    }
+  }
+  const confirmTelSelectors = [
+    'input[name*="tel-confirm"]',
+    'input[name*="phone-confirm"]',
+    'input[name*="電話確認"]',
+  ];
+  for (const sel of confirmTelSelectors) {
+    const el = formDocument.locator(sel).first();
+    if (await el.isVisible()) {
+      try { await el.fill(profile.tel || ''); } catch {}
     }
   }
 
@@ -332,6 +377,11 @@ export async function clickSubmitButton(page: any): Promise<void> {
   const submitSelectors = [
     'input[type="submit"]',
     'button[type="submit"]',
+    'input[type="image"]',
+    'a[role="button"]',
+    'a[href*="confirm"]',
+    'a[href*="send"]',
+    'a[href*="submit"]',
     ...SUBMIT_KEYWORDS.value.map(value => `input[value*="${value}"]`),
     ...SUBMIT_KEYWORDS.alt.map(alt => `input[alt*="${alt}"]`)
   ];
@@ -347,7 +397,8 @@ export async function clickSubmitButton(page: any): Promise<void> {
         try {
           // ボタンが有効かチェック
           const isDisabled = await element.getAttribute('disabled');
-          if (isDisabled === null) {
+          const ariaDisabled = await element.getAttribute('aria-disabled');
+          if (isDisabled === null && ariaDisabled !== 'true') {
             try { await element.scrollIntoViewIfNeeded(); } catch (_) {}
             await element.click({ timeout: 10000 }).catch(async () => {
               await element.click({ timeout: 10000, force: true });
@@ -365,7 +416,7 @@ export async function clickSubmitButton(page: any): Promise<void> {
 
   // 次にテキストベースのボタンを検索（より広範に検索）
   for (const text of SUBMIT_KEYWORDS.text) {
-    const elements = formDocument.locator(`button, input[type="button"], span`).filter({ hasText: text });
+    const elements = formDocument.locator(`button, input[type="button"], span, a`).filter({ hasText: text });
     const count = await elements.count();
 
     for (let i = 0; i < count; i++) {
@@ -420,7 +471,19 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     // フォームドキュメントを探索
     const formDocument = await findFormDocument(page);
     if (!formDocument) {
-      return { success: false, message: 'フォームドキュメントが見つからないため確認画面処理をスキップ' };
+      // フォームが見つからない = 送信後にフォームが消えているケースを成功扱い
+      const content = await page.content();
+      const successHint = /ありがとう|送信完了|送信しました|success|complete|thank/i.test(content);
+      if (successHint) {
+        return { success: true, message: '成功キーワード検知（フォーム非表示）' };
+      }
+      // 成功キーワードがなくても、フォームやtextarea、送信UIが消えていれば成功とみなす
+      const hasFormUi = (await page.locator('form, textarea, input[type="submit"], button[type="submit"]').count()) > 0;
+      if (!hasFormUi) {
+        return { success: true, message: 'フォームが消失したため送信完了と判断' };
+      }
+      // それでも判断不可の場合のみフォールバック失敗
+      return { success: false, message: '確認UI不在だが成功判定不可（要サイト個別対応）' };
     }
 
     // ====================================

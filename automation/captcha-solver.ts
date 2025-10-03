@@ -68,9 +68,12 @@ export async function handleRecaptchaFree(page: Page): Promise<void> {
       // サイトキーを取得
       const siteKey = await recaptchaFrame.locator('[data-sitekey]').getAttribute('data-sitekey');
       if (siteKey) {
-        // 手動解決を促す（スクリプトを一時停止）
-        console.log('CAPTCHAを手動で解決してください。スクリプトを一時停止します。');
-        await page.pause(); // デバッグ用に一時停止（本番では削除または条件付き）
+        // CI環境では停止しない
+        const shouldPause = !process.env.CI;
+        if (shouldPause) {
+          console.log('CAPTCHAを手動で解決してください。スクリプトを一時停止します。');
+          await page.pause();
+        }
       }
     }
   } catch (error) {
