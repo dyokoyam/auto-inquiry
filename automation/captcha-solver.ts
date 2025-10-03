@@ -61,12 +61,17 @@ export async function simulateHumanInput(page: Page): Promise<void> {
  */
 export async function handleRecaptchaFree(page: Page): Promise<void> {
   try {
-    const recaptchaFrame = page.frameLocator('[src*="recaptcha"]');
-    if (await recaptchaFrame.locator('.g-recaptcha').isVisible()) {
+    // 厳格モード違反回避のため first() を用いて単一要素に限定
+    const recaptchaIframe = (page as any).locator('iframe[src*="recaptcha"]').first();
+    const hasRecaptcha = await recaptchaIframe.isVisible().catch(() => false);
+    if (hasRecaptcha) {
       console.log('reCAPTCHA検知。無料オプションで対応します。');
 
-      // サイトキーを取得
-      const siteKey = await recaptchaFrame.locator('[data-sitekey]').getAttribute('data-sitekey');
+      // サイトキーは任意（手動時の目安）
+      let siteKey = '';
+      try {
+        siteKey = await (page as any).locator('.g-recaptcha[data-sitekey]').first().getAttribute('data-sitekey');
+      } catch {}
       if (siteKey) {
         // CI環境では停止しない
         const shouldPause = !process.env.CI;

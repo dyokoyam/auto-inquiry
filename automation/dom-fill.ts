@@ -169,6 +169,11 @@ export async function fillForm(page: any, profile: Profile) {
     const element = formDocument.locator(selector).first();
     if (await element.isVisible()) {
       await element.fill(profile.message || 'お問い合わせ内容です。');
+      try {
+        await (element as any).dispatchEvent('input');
+        await (element as any).dispatchEvent('change');
+        await (element as any).blur();
+      } catch (_) {}
       console.log(`メッセージ入力完了: ${selector}`);
       break;
     }
@@ -200,6 +205,11 @@ export async function fillForm(page: any, profile: Profile) {
               await input.fill(value);
             }
             console.log(`フィールド入力: ${fieldType} = ${value}`);
+            try {
+              await (input as any).dispatchEvent('input');
+              await (input as any).dispatchEvent('change');
+              await (input as any).blur();
+            } catch (_) {}
           }
         }
       }
@@ -225,6 +235,11 @@ export async function fillForm(page: any, profile: Profile) {
             await element.fill(value);
           }
           console.log(`名前付きフィールド入力: ${fieldType} = ${value}`);
+          try {
+            await (element as any).dispatchEvent('input');
+            await (element as any).dispatchEvent('change');
+            await (element as any).blur();
+          } catch (_) {}
         }
       }
     }
@@ -279,6 +294,11 @@ export async function fillForm(page: any, profile: Profile) {
         if (!selected && optionCount > 0) {
           await select.selectOption({ index: optionCount - 1 });
         }
+        try {
+          await (select as any).dispatchEvent('input');
+          await (select as any).dispatchEvent('change');
+          await (select as any).blur();
+        } catch (_) {}
       } catch (_) {}
     }
   }
@@ -336,6 +356,11 @@ export async function fillForm(page: any, profile: Profile) {
       const current = await input.inputValue();
       if (current.trim() === '') {
         try { await input.fill('—'); } catch (_) {}
+        try {
+          await (input as any).dispatchEvent('input');
+          await (input as any).dispatchEvent('change');
+          await (input as any).blur();
+        } catch (_) {}
       }
     }
   }

@@ -31,6 +31,26 @@ interface ExploreResult {
   message?: string;
 }
 
+type ReasonCode =
+  | 'OK_SUCCESS_KEYWORD'
+  | 'OK_NO_FORM_UI'
+  | 'OK_CONFIRM_CLICKED'
+  | 'SKIP_REFUSAL'
+  | 'ERR_NO_FORM'
+  | 'ERR_CONTACT_PAGE_NO_FORM'
+  | 'ERR_NO_SUBMIT'
+  | 'ERR_REQUIRED_UNFILLED'
+  | 'ERR_EXCEPTION'
+  | 'ERR_UNKNOWN';
+
+interface TargetOutcome {
+  target: Target;
+  success: boolean;
+  reason: ReasonCode;
+  detail?: string;
+  finalUrl?: string;
+}
+
 // ====================================
 // 定数定義（salesbotから移植・最適化）
 // ====================================
@@ -280,18 +300,35 @@ function processTagReplacements(message: string, profile: Profile): string {
 // ====================================
 
 const logFile = path.join(__dirname, '../logs', `run-${Date.now()}.log`);
-function log(message: string) {
-  const timestamp = new Date().toISOString();
-  const logMessage = `[${timestamp}] ${message}`;
 
-  try {
-    fs.appendFileSync(logFile, logMessage + '\n');
-  } catch (error) {
-    // ログファイル書き込みエラー時はコンソールのみ出力
-    console.error('ログ書き込みエラー:', error);
+// console.* をファイルへミラーする（重複防止のため log() はファイル追記しない）
+function enableConsoleMirroring(targetFile: string) {
+  try { fs.mkdirSync(path.dirname(targetFile), { recursive: true }); } catch (_) {}
+  const orig = {
+    log: console.log.bind(console),
+    info: console.info ? console.info.bind(console) : console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+  } as const;
+
+  function writeLine(args: any[]) {
+    const timestamp = new Date().toISOString();
+    const line = args.map(a => {
+      try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+    }).join(' ');
+    try { fs.appendFileSync(targetFile, `[${timestamp}] ${line}\n`); } catch (_) {}
   }
 
-  // コンソール出力で視認性を向上
+  console.log = (...args: any[]) => { writeLine(args); (orig.log as any)(...args); };
+  console.info = (...args: any[]) => { writeLine(args); (orig.info as any)(...args); };
+  console.warn = (...args: any[]) => { writeLine(args); (orig.warn as any)(...args); };
+  console.error = (...args: any[]) => { writeLine(args); (orig.error as any)(...args); };
+}
+
+enableConsoleMirroring(logFile);
+
+function log(message: string) {
+  // コンソール出力で視認性を向上（ファイル追記は console ミラーに任せる）
   if (message.includes('✅ 送信成功')) {
     console.log('\x1b[32m%s\x1b[0m', message); // 緑色
   } else if (message.includes('❌ 送信失敗')) {
@@ -331,13 +368,17 @@ async function main() {
 
     log(`👤 使用プロフィール: ${profile.name} (${profile.company})`);
 
-    // 各ターゲットに対して処理（最適化: エラーハンドリング強化）
+    const outcomes: TargetOutcome[] = [];
+
+    // 各ターゲットに対して処理（結果を収集し詳細ログ）
     for (const target of targets) {
       try {
-        await processTarget(page, target, processedProfile);
+        const outcome = await processTarget(page, target, processedProfile);
+        outcomes.push(outcome);
       } catch (targetError) {
         const errorMessage = targetError instanceof Error ? targetError.message : String(targetError);
         log(`❌ ターゲット処理エラー (${target.url}): ${errorMessage}`);
+        outcomes.push({ target, success: false, reason: 'ERR_EXCEPTION', detail: errorMessage });
       }
     }
 
@@ -345,7 +386,12 @@ async function main() {
 
     // 処理結果サマリー
     log('🏁 プロセス完了');
-    log(`📈 処理結果サマリー: ${targets.length}件中 ${targets.length}件処理完了`);
+    const okCount = outcomes.filter(o => o.success).length;
+    log(`📈 処理結果サマリー: 成功 ${okCount} / ${outcomes.length}`);
+    // 詳細サマリ（1行/ターゲット）
+    for (const o of outcomes) {
+      log(`- [${o.success ? 'OK' : 'NG'}] ${o.target.url} (${o.target.企業名}) reason=${o.reason}${o.finalUrl ? ` final=${o.finalUrl}` : ''}${o.detail ? ` detail=${o.detail}` : ''}`);
+    }
 
     // ログファイルのパスを表示
     log(`📄 詳細ログ: ${logFile}`);
@@ -360,7 +406,7 @@ async function main() {
 // ターゲット処理関数（salesbotのexecutor.jsから移植・強化版）
 // ====================================
 
-async function processTarget(page: any, target: Target, profile: Profile) {
+async function processTarget(page: any, target: Target, profile: Profile): Promise<TargetOutcome> {
   log(`🔄 ターゲット処理開始: ${target.url} (${target.企業名})`);
 
   try {
@@ -376,14 +422,14 @@ async function processTarget(page: any, target: Target, profile: Profile) {
 
     if (!exploreResult.success) {
       log(`❌ フォーム探索失敗: ${target.url} - ${exploreResult.message}`);
-      return;
+      return { target, success: false, reason: 'ERR_NO_FORM', detail: exploreResult.message };
     }
 
     // お断りキーワードチェック（簡易）
     const pageContent = await page.content();
     if (REFUSAL_KEYWORDS.some(keyword => pageContent.includes(keyword))) {
       log(`🚫 お断りキーワード検知: ${target.url} をスキップ`);
-      return;
+      return { target, success: false, reason: 'SKIP_REFUSAL' };
     }
 
     // ====================================
@@ -399,7 +445,7 @@ async function processTarget(page: any, target: Target, profile: Profile) {
       const secondExploreResult = await exploreForm(page);
       if (!secondExploreResult.success || !secondExploreResult.currentForm) {
         log(`❌ コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
-        return;
+        return { target, success: false, reason: 'ERR_CONTACT_PAGE_NO_FORM', detail: exploreResult.contactLink };
       }
     }
 
@@ -469,7 +515,7 @@ async function processTarget(page: any, target: Target, profile: Profile) {
 
     if (enabledButtons.length === 0) {
       log('警告: 有効な送信ボタンが見つかりません');
-      return; // 送信ボタンがない場合は処理を中断
+      return { target, success: false, reason: 'ERR_NO_SUBMIT' };
     }
 
     // 送信ボタンクリック
@@ -486,12 +532,17 @@ async function processTarget(page: any, target: Target, profile: Profile) {
     // 結果ログ出力（成功/失敗の明確な表示）
     if (confirmResult.success) {
       log(`✅ 送信成功: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
+      return { target, success: true, reason: /成功|complete|thank|完了|ありがとう/.test(confirmResult.message) ? 'OK_SUCCESS_KEYWORD' : 'OK_CONFIRM_CLICKED', detail: confirmResult.message, finalUrl: page.url() };
     } else {
       log(`❌ 送信失敗: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
+      // 必須未入力の検出結果がログ済みであれば理由付与
+      const failureDetail = confirmResult.message || 'unknown';
+      return { target, success: false, reason: /必須|required/.test(failureDetail) ? 'ERR_REQUIRED_UNFILLED' : 'ERR_UNKNOWN', detail: failureDetail, finalUrl: page.url() };
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log(`💥 ターゲット処理エラー (${target.url}): ${errorMessage}`);
+    return { target, success: false, reason: 'ERR_EXCEPTION', detail: errorMessage };
   }
 }
 
