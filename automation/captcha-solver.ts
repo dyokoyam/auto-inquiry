@@ -72,6 +72,14 @@ export async function handleRecaptchaFree(page: Page): Promise<void> {
       try {
         siteKey = await (page as any).locator('.g-recaptcha[data-sitekey]').first().getAttribute('data-sitekey');
       } catch {}
+      // v2 checkbox型の自動チェック試行（失敗しても継続）
+      try {
+        const frame = (page as any).frameLocator('iframe[src*="recaptcha"]').first();
+        const checkbox = frame.locator('#recaptcha-anchor');
+        if (await checkbox.isVisible().catch(() => false)) {
+          await checkbox.click({ timeout: 5000 }).catch(() => {});
+        }
+      } catch (_) {}
       if (siteKey) {
         // CI環境では停止しない
         const shouldPause = !process.env.CI;

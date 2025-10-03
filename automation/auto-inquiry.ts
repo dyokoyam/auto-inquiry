@@ -500,7 +500,7 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
 
     // 送信ボタンクリック前にボタンの状態を確認
     log('送信ボタンの状態を確認中...');
-    const submitButtons = await page.locator('input[type="submit"], button[type="submit"], button').evaluateAll((buttons: Element[]) =>
+    const submitButtons = await page.locator('input[type="submit"], button[type="submit"], button, input[type="image"]').evaluateAll((buttons: Element[]) =>
       buttons.map((btn: Element) => ({
         tagName: btn.tagName,
         type: (btn as HTMLInputElement).type || 'N/A',
@@ -532,12 +532,12 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
     // 結果ログ出力（成功/失敗の明確な表示）
     if (confirmResult.success) {
       log(`✅ 送信成功: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
-      return { target, success: true, reason: /成功|complete|thank|完了|ありがとう/.test(confirmResult.message) ? 'OK_SUCCESS_KEYWORD' : 'OK_CONFIRM_CLICKED', detail: confirmResult.message, finalUrl: page.url() };
+      return { target, success: true, reason: /成功|complete|thank|完了|ありがとう|受付|受け付け/.test(confirmResult.message) ? 'OK_SUCCESS_KEYWORD' : 'OK_CONFIRM_CLICKED', detail: confirmResult.message, finalUrl: page.url() };
     } else {
       log(`❌ 送信失敗: ${target.url} (${target.企業名}) - ${confirmResult.message}`);
       // 必須未入力の検出結果がログ済みであれば理由付与
       const failureDetail = confirmResult.message || 'unknown';
-      return { target, success: false, reason: /必須|required/.test(failureDetail) ? 'ERR_REQUIRED_UNFILLED' : 'ERR_UNKNOWN', detail: failureDetail, finalUrl: page.url() };
+      return { target, success: false, reason: /必須|required|未入力|入力してください/.test(failureDetail) ? 'ERR_REQUIRED_UNFILLED' : 'ERR_UNKNOWN', detail: failureDetail, finalUrl: page.url() };
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
