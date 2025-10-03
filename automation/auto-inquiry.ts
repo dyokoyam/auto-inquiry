@@ -353,9 +353,19 @@ async function main() {
 
     log(`📊 ターゲット数: ${targets.length}, プロフィール数: ${profiles.length}`);
 
-    // ブラウザ起動
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    // ブラウザ起動（アンチボット対策: UA/locale/AutomationControlled）
+    const browser = await chromium.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      locale: 'ja-JP',
+      timezoneId: 'Asia/Tokyo'
+    });
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      try {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      } catch {}
+    });
 
     // プロフィール選択とタグ置換（一度だけ）
     const profile = getSelectedProfile(profiles);
@@ -522,9 +532,15 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
     log('送信ボタンをクリックします...');
     await clickSubmitButton(page);
 
-    // 送信後のページ遷移を待つ（確認画面または完了画面の表示を待つ）
+    // 送信後のページ遷移/AJAX完了を待つ（最大10秒）
     log('送信ボタンをクリックしました。ページ遷移を待機中...');
-    await page.waitForTimeout(3000); // 3秒待機
+    try {
+      await Promise.race([
+        page.waitForLoadState('networkidle', { timeout: 10000 }),
+        page.waitForURL(/(thanks|complete|completed|done|finish|finished|sent|success|ok)/i, { timeout: 10000 }).catch(() => {}),
+      ]);
+    } catch {}
+    await page.waitForTimeout(2000);
 
     // 確認画面対応（送信後の状態でチェック）
     const confirmResult = await handleConfirmationPage(page);

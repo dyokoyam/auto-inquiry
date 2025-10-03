@@ -479,9 +479,13 @@ export async function clickSubmitButton(page: any): Promise<void> {
   const activeForm = await findActiveForm(formDocument);
   const scope = activeForm || formDocument;
 
-  // 1) 送信系キーワードを含む候補を最優先でクリック
+  // 1) 送信系キーワードを含む候補を最優先でクリック（確認→送信の順に優先）
   const textKeywords = [...SUBMIT_KEYWORDS.text];
-  for (const text of textKeywords) {
+  // 確認を優先して押し、その後の handleConfirmationPage で送信を行うサイトに最適化
+  const confirmFirst = ['確認', '確 認', '確　認'];
+  const sendWords = textKeywords.filter(t => !confirmFirst.includes(t));
+  const ordered = [...confirmFirst, ...sendWords];
+  for (const text of ordered) {
     const elements = scope.locator('button, input[type="button"], span, a').filter({ hasText: text });
     const count = await elements.count();
     for (let i = 0; i < count; i++) {
