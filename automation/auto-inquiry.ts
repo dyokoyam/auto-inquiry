@@ -234,6 +234,31 @@ async function exploreForm(page: any): Promise<ExploreResult> {
   }
 }
 
+// 追加: 複数のコンタクトリンク候補を収集（末尾優先）
+async function collectContactLinks(page: any): Promise<string[]> {
+  try {
+    const base = page.url().replace(/\/$/, '');
+    const links = page.locator('a');
+    const n = await links.count();
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const link = links.nth(i);
+      const href = (await link.getAttribute('href')) || '';
+      const text = (await link.innerText().catch(() => '')) || '';
+      const isContact = /inq|contact/i.test(href) || /問い合|問合|CONTACT|Contact/.test(text);
+      if (isContact) {
+        const abs = href.startsWith('http') ? href : new URL(href, base).href;
+        const normalized = abs.replace(/\/$/, '');
+        if (normalized !== base) out.push(normalized);
+      }
+    }
+    // 重複排除 + 末尾（より具体的リンクが多い傾向）を優先
+    return Array.from(new Set(out)).reverse();
+  } catch (_) {
+    return [];
+  }
+}
+
 // ====================================
 // データ読み込み関数
 // ====================================
@@ -454,8 +479,27 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
       // 遷移後に再度フォーム探索
       const secondExploreResult = await exploreForm(page);
       if (!secondExploreResult.success || !secondExploreResult.currentForm) {
-        log(`❌ コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
-        return { target, success: false, reason: 'ERR_CONTACT_PAGE_NO_FORM', detail: exploreResult.contactLink };
+        // 代替候補を順に再試行（例: contact -> contact_rent / contact_sell）
+        try {
+          await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
+          await page.waitForTimeout(PAGE_LOAD_DELAY);
+        } catch {}
+        const candidates = await collectContactLinks(page);
+        for (const href of candidates) {
+          if (href === exploreResult.contactLink) continue;
+          log(`🔁 代替コンタクトリンク再試行: ${href}`);
+          try {
+            await page.goto(href, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
+            await page.waitForTimeout(PAGE_LOAD_DELAY);
+          } catch { continue; }
+          const r = await exploreForm(page);
+          if (r.success && r.currentForm) break;
+        }
+        const finalCheck = await exploreForm(page);
+        if (!finalCheck.success || !finalCheck.currentForm) {
+          log(`❌ コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
+          return { target, success: false, reason: 'ERR_CONTACT_PAGE_NO_FORM', detail: exploreResult.contactLink };
+        }
       }
     }
 

@@ -46,8 +46,8 @@ const FIELD_KEYWORDS = {
 };
 
 const SUBMIT_KEYWORDS = {
-  text: ['送信', '送 信', '送　信', '確認', '確 認', '確　認', 'Send', 'SEND', 'Submit', 'SUBMIT', '次へ', '次に進む', 'はい', 'OK', '同意する', '続行'],
-  value: ['送信', '送 信', '送　信', '確認', '確 認', '確　認', 'Send', 'SEND', 'Submit', 'SUBMIT', '問い合', '問合', '次へ', '次に進む', 'はい', 'OK', '同意する', '続行'],
+  text: ['送信', '送 信', '送　信', 'この内容で送信', '確認', '確 認', '確　認', 'Send', 'SEND', 'Submit', 'SUBMIT', '次へ', '次に進む', 'はい', 'OK', '同意する', '続行'],
+  value: ['送信', '送 信', '送　信', 'この内容で送信', '確認', '確 認', '確　認', 'Send', 'SEND', 'Submit', 'SUBMIT', '問い合', '問合', '次へ', '次に進む', 'はい', 'OK', '同意する', '続行'],
   alt: ['送信', '確認', 'Send', 'SEND', 'Submit', 'SUBMIT', '問い合', '問合', '次へ', '次に進む', 'はい', 'OK', '同意する', '続行']
 };
 
@@ -238,6 +238,14 @@ export async function fillForm(page: any, profile: Profile) {
           if (value) {
             // SELECT は selectOption、それ以外は fill
             const tagName = await input.evaluate((el: Element) => el.tagName);
+            if (tagName !== 'SELECT') {
+              // 既に値があれば上書きしない
+              const current = (await (input as any).inputValue().catch(() => '')) || '';
+              if (current.trim().length > 0) continue;
+              // mailaddress 誤爆防止: fullAddress は mail を含む name には入れない
+              const nameAttr = (await input.getAttribute('name')) || '';
+              if (fieldType === 'fullAddress' && /mail/i.test(nameAttr)) continue;
+            }
             if (tagName === 'SELECT') {
               try {
                 await (input as any).selectOption({ label: value });
@@ -268,6 +276,14 @@ export async function fillForm(page: any, profile: Profile) {
         const value = getProfileValue(profile, fieldType);
         if (value) {
           const tagName = await element.evaluate((el: Element) => el.tagName);
+          if (tagName !== 'SELECT') {
+            // 既に値があれば上書きしない
+            const current = (await (element as any).inputValue().catch(() => '')) || '';
+            if (current.trim().length > 0) continue;
+            // mailaddress 誤爆防止
+            const nameAttr = (await element.getAttribute('name')) || '';
+            if (fieldType === 'fullAddress' && /mail/i.test(nameAttr)) continue;
+          }
           if (tagName === 'SELECT') {
             try {
               await (element as any).selectOption({ label: value });
@@ -601,6 +617,9 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
       if (successTextPattern.test(content) || successUrlPattern.test(finalUrlNow)) {
         return { success: true, message: '送信成功を確認（成功キーワード/URL検知）' };
       }
+      // AJAX系成功UIの遅延表示を待機
+      const ajaxResult = await waitForAjaxSubmissionResult(page, 12000);
+      if (ajaxResult) return ajaxResult;
       const hasFormUi = (await page.locator('form, textarea, input[type="submit"], button[type="submit"]').count()) > 0;
       if (!hasFormUi) {
         return { success: false, message: '確認UI不在かつ成功根拠不足（失敗扱い）' };
@@ -625,6 +644,9 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
       const textareas = formDocument.locator('textarea');
       const textareaCount = await textareas.count();
       if (textareaCount > 0) {
+        // まずAJAX成功UIの遅延表示を待機
+        const ajaxResult = await waitForAjaxSubmissionResult(page, 12000);
+        if (ajaxResult) return ajaxResult;
         return { success: false, message: '送信後もフォームが残存（失敗の可能性）' };
       }
     }
@@ -715,6 +737,9 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
       if (successTextPattern.test(content) || successUrlPattern.test(finalUrl)) {
         return { success: true, message: '送信成功を確認（ボタン無/成功兆候）' };
       }
+      // AJAX成功UIの遅延表示を待機
+      const ajaxResult = await waitForAjaxSubmissionResult(page, 12000);
+      if (ajaxResult) return ajaxResult;
       return { success: false, message: '確認ボタン不在で成功兆候なし（失敗）' };
     }
 
@@ -748,6 +773,9 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     if (successTextPattern.test(finalPageContent) || successUrlPattern.test(finalUrl)) {
       return { success: true, message: '送信成功を確認（成功キーワード/URL検知）' };
     }
+    // AJAX成功UIの遅延表示を最後にもう一度待機
+    const ajaxResult = await waitForAjaxSubmissionResult(page, 8000);
+    if (ajaxResult) return ajaxResult;
     // 明確な成功根拠がない場合は失敗扱い（false positive回避）
     return { success: false, message: '最終検証で成功根拠なし（失敗扱い）' };
 
@@ -758,5 +786,65 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
       message: `確認画面処理エラー: ${errorMessage}`
     };
   }
+}
+
+// ====================================
+// AJAX送信の成功/失敗UI待機（CF7/WPForms/Ninja対応）
+// ====================================
+
+async function waitForAjaxSubmissionResult(page: any, timeoutMs: number): Promise<{ success: boolean; message: string } | null> {
+  const successSelectors = [
+    // Contact Form 7
+    '.wpcf7 form.sent',
+    '.wpcf7-mail-sent-ok',
+    '.wpcf7 .wpcf7-response-output.wpcf7-mail-sent-ok',
+    // WPForms
+    '.wpforms-confirmation-container',
+    '.wpforms-confirmation-scroll',
+    // Ninja Forms
+    '.nf-response-msg',
+    '.ninja-forms-success-msg',
+    '.nf-form-cont .nf-response-msg',
+  ];
+  const failureSelectors = [
+    // Contact Form 7
+    '.wpcf7 form.invalid',
+    '.wpcf7-not-valid',
+    '.wpcf7 .wpcf7-response-output.wpcf7-validation-errors',
+    // WPForms
+    '.wpforms-error',
+    '.wpforms-error-container',
+    // Ninja Forms
+    '.nf-error',
+    '.ninja-forms-error-msg',
+  ];
+  const successTextPattern = /(ありがとうございました|送信完了|送信しました|受付完了|受け付けました|ありがとう|complete|success|thank|done)/i;
+  const failureTextPattern = /(エラー|失敗|error|invalid|必須|未入力|もう一度|再入力|入力してください|不正)/i;
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const foundSuccess = await page.evaluate((sels: string[], re: string) => {
+        const success = sels.some(sel => document.querySelector(sel));
+        if (success) return true;
+        const txt = document.body?.innerText || '';
+        return new RegExp(re, 'i').test(txt);
+      }, successSelectors, successTextPattern.source);
+      if (foundSuccess) {
+        return { success: true, message: 'AJAX成功UIを検知' };
+      }
+      const foundFailure = await page.evaluate((sels: string[], re: string) => {
+        const failure = sels.some(sel => document.querySelector(sel));
+        if (failure) return true;
+        const txt = document.body?.innerText || '';
+        return new RegExp(re, 'i').test(txt);
+      }, failureSelectors, failureTextPattern.source);
+      if (foundFailure) {
+        return { success: false, message: 'AJAX失敗UIを検知' };
+      }
+    } catch {}
+    await page.waitForTimeout(300);
+  }
+  return null;
 }
 
