@@ -61,9 +61,13 @@ export async function simulateHumanInput(page: Page): Promise<void> {
  */
 export async function handleRecaptchaFree(page: Page): Promise<void> {
   try {
+    // v3のbadgeのみ（右下のロゴ）だけがあるケースは無視する
+    const badge = (page as any).locator('.grecaptcha-badge, div[style*="grecaptcha-badge"]').first();
+    const badgeVisible = await badge.isVisible().catch(() => false);
     // 厳格モード違反回避のため first() を用いて単一要素に限定
     const recaptchaIframe = (page as any).locator('iframe[src*="recaptcha"]').first();
-    const hasRecaptcha = await recaptchaIframe.isVisible().catch(() => false);
+    const iframeVisible = await recaptchaIframe.isVisible().catch(() => false);
+    const hasRecaptcha = iframeVisible && !badgeVisible; // badgeのみはreCAPTCHAなし扱い
     if (hasRecaptcha) {
       console.log('reCAPTCHA検知。無料オプションで対応します。');
 

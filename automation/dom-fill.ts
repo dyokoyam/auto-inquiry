@@ -637,8 +637,8 @@ export async function handleConfirmationPage(page: any): Promise<{ success: bool
     const isConfirmationPage = /確認(画面|ページ)?|確認へ|内容確認|最終確認/i.test(currentPageContent) && !successTextPattern.test(currentPageContent);
 
     if (isConfirmationPage) {
-      // 確認画面の場合、textareaの値チェックは行わない（確認画面で内容表示される場合がある）
-      console.log('確認画面を検知しました。textareaチェックをスキップします。');
+      // 元の基準へ回帰: 確認画面はボタン探索を行うが、成功兆候が無いままフォームが残る場合は失敗に倒す
+      console.log('確認画面を検知しました。');
     } else {
       // 確認画面ではない場合（依然としてフォーム）
       const textareas = formDocument.locator('textarea');

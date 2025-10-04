@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import csv from 'csv-parser';
 import { fillForm, clickSubmitButton, handleConfirmationPage, findFormDocument } from './dom-fill';
-import { handleRecaptchaFree, detectAndSolveCaptchaImage } from './captcha-solver';
+import { handleRecaptchaFree, detectAndSolveCaptchaImage, simulateHumanInput } from './captcha-solver';
 
 // 型定義
 interface Profile {
@@ -78,25 +78,21 @@ async function exploreForm(page: any): Promise<ExploreResult> {
     let currentUrl = page.url();
 
     // ====================================
-    // メインドキュメントでtextarea探索
+    // メインドキュメントでtextarea/フォーム要素探索
     // ====================================
 
     const textareas = page.locator('textarea');
+    const inputsOrSelects = page.locator('form input, form select');
     const textareaCount = await textareas.count();
+    const inputSelectCount = await inputsOrSelects.count();
 
-    if (textareaCount > 0) {
-      // 表示されているtextareaのみをチェック
-      for (let i = 0; i < textareaCount; i++) {
-        const textarea = textareas.nth(i);
-        const isVisible = await textarea.isVisible();
-        if (isVisible) {
-          log(`フォーム発見: 現在のページにtextareaが存在`);
-          return {
-            success: true,
-            currentForm: true,
-            contactLink: ""
-          };
-        }
+    if (textareaCount > 0 || inputSelectCount > 2) {
+      // 表示されているフォーム要素があれば「現在のページにフォームあり」
+      const visibleTextarea = await textareas.first().isVisible().catch(() => false);
+      const visibleField = await inputsOrSelects.first().isVisible().catch(() => false);
+      if (visibleTextarea || visibleField) {
+        log(`フォーム発見: 現在のページにフォーム要素が存在`);
+        return { success: true, currentForm: true, contactLink: "" };
       }
     }
 
@@ -112,15 +108,17 @@ async function exploreForm(page: any): Promise<ExploreResult> {
       try {
         const frame = page.frameLocator(`iframe:nth-of-type(${i + 1})`);
         const iframeTextareas = frame.locator('textarea');
+        const iframeInputsOrSelects = frame.locator('form input, form select');
         const iframeTextareaCount = await iframeTextareas.count();
+        const iframeFieldCount = await iframeInputsOrSelects.count();
 
-        if (iframeTextareaCount > 0) {
-          log(`フォーム発見: iframe内にtextareaが存在`);
-          return {
-            success: true,
-            currentForm: true,
-            contactLink: ""
-          };
+        if (iframeTextareaCount > 0 || iframeFieldCount > 2) {
+          const hasVisible = await iframeTextareas.first().isVisible().catch(() => false)
+            || await iframeInputsOrSelects.first().isVisible().catch(() => false);
+          if (hasVisible) {
+            log(`フォーム発見: iframe内にフォーム要素が存在`);
+            return { success: true, currentForm: true, contactLink: "" };
+          }
         }
       } catch (iframeError) {
         // iframe アクセスエラーを無視
@@ -379,7 +377,9 @@ async function main() {
     log(`📊 ターゲット数: ${targets.length}, プロフィール数: ${profiles.length}`);
 
     // ブラウザ起動（アンチボット対策: UA/locale/AutomationControlled）
-    const browser = await chromium.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
+    const envHeadless = process.env.HEADLESS?.toLowerCase?.() || 'true';
+    const headless = !(envHeadless === 'false' || envHeadless === '0' || envHeadless === 'no');
+    const browser = await chromium.launch({ headless, args: ['--disable-blink-features=AutomationControlled'] });
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       locale: 'ja-JP',
@@ -479,24 +479,53 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
       // 遷移後に再度フォーム探索
       const secondExploreResult = await exploreForm(page);
       if (!secondExploreResult.success || !secondExploreResult.currentForm) {
-        // 代替候補を順に再試行（例: contact -> contact_rent / contact_sell）
-        try {
-          await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
-          await page.waitForTimeout(PAGE_LOAD_DELAY);
-        } catch {}
-        const candidates = await collectContactLinks(page);
-        for (const href of candidates) {
-          if (href === exploreResult.contactLink) continue;
-          log(`🔁 代替コンタクトリンク再試行: ${href}`);
+        // 1) 現在のコンタクトページ内の派生リンク（例: /contact_sell, /contact_rent）を順に辿る
+        const currentContactUrl = page.url().replace(/\/$/, '');
+        const localCandidates = (await collectContactLinks(page))
+          .filter(href => href.replace(/\/$/, '') !== currentContactUrl)
+          // 同一オリジン優先 + パスが長いものを優先（より具体的な派生ページを想定）
+          .sort((a, b) => {
+            try {
+              const ua = new URL(a); const ub = new URL(b);
+              const sameA = ua.origin === new URL(currentContactUrl).origin ? 1 : 0;
+              const sameB = ub.origin === new URL(currentContactUrl).origin ? 1 : 0;
+              if (sameA !== sameB) return sameB - sameA;
+              return (ua.pathname.length - ub.pathname.length);
+            } catch { return 0; }
+          });
+
+        let reachedForm = false;
+        for (const href of localCandidates) {
+          log(`🔁 派生コンタクトリンク遷移: ${href}`);
           try {
             await page.goto(href, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
             await page.waitForTimeout(PAGE_LOAD_DELAY);
           } catch { continue; }
           const r = await exploreForm(page);
-          if (r.success && r.currentForm) break;
+          if (r.success && r.currentForm) { reachedForm = true; break; }
         }
+
+        // 2) ダメなら初めて target.url に戻って全候補を再試行
+        if (!reachedForm) {
+          try {
+            await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
+            await page.waitForTimeout(PAGE_LOAD_DELAY);
+          } catch {}
+          let candidates = await collectContactLinks(page);
+          for (const href of candidates) {
+            if (href === exploreResult.contactLink) continue;
+            log(`🔁 代替コンタクトリンク再試行: ${href}`);
+            try {
+              await page.goto(href, { waitUntil: 'domcontentloaded', timeout: WAIT_TIMEOUT });
+              await page.waitForTimeout(PAGE_LOAD_DELAY);
+            } catch { continue; }
+            const r = await exploreForm(page);
+            if (r.success && r.currentForm) { reachedForm = true; break; }
+          }
+        }
+
         const finalCheck = await exploreForm(page);
-        if (!finalCheck.success || !finalCheck.currentForm) {
+        if (!reachedForm && (!finalCheck.success || !finalCheck.currentForm)) {
           log(`❌ コンタクトページでフォームが見つかりませんでした: ${exploreResult.contactLink}`);
           return { target, success: false, reason: 'ERR_CONTACT_PAGE_NO_FORM', detail: exploreResult.contactLink };
         }
@@ -571,6 +600,9 @@ async function processTarget(page: any, target: Target, profile: Profile): Promi
       log('警告: 有効な送信ボタンが見つかりません');
       return { target, success: false, reason: 'ERR_NO_SUBMIT' };
     }
+
+    // 送信前に人間的インタラクションを挿入（微小ランダムウェイト等）
+    await simulateHumanInput(page as any);
 
     // 送信ボタンクリック
     log('送信ボタンをクリックします...');
